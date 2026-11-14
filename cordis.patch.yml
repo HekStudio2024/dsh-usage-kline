@@ -1,0 +1,6 @@
+# DeepSeek usage K-line bundle: one Host row that serves usage data and
+# account balance to the Client half.
+- insert:
+    - id: usage-kline
+      name: 'dsh-usage-kline'
+      config: {}
