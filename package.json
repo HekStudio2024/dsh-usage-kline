@@ -1,6 +1,6 @@
 {
   "name": "dsh-usage-kline",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "description": "DeepSeek usage terminal: a stock-terminal style K-line panel for usage, spend and balance",
   "main": "index.js",
@@ -18,24 +18,6 @@
     "icon.svg",
     "README.md"
   ],
-  "keywords": [
-    "deepseek",
-    "harness",
-    "dsh",
-    "dsh-plugin",
-    "usage",
-    "billing",
-    "kline"
-  ],
-  "homepage": "https://hekstudio2024.github.io",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/HekStudio2024/dsh-usage-kline.git"
-  },
-  "bugs": {
-    "url": "https://github.com/HekStudio2024/dsh-usage-kline/issues"
-  },
-  "license": "MIT",
   "dsh": {
     "client": {
       "platform": "web",
@@ -47,5 +29,38 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "dshGo": {
+    "v": 1,
+    "minApp": "1.0.3",
+    "title": {
+      "zh": "鐢ㄩ噺琛屾儏",
+      "en": "Usage terminal"
+    },
+    "icon": "chart",
+    "contributes": {
+      "composer.strip": [
+        {
+          "id": "today",
+          "icon": "chart",
+          "panel": "usage"
+        }
+      ],
+      "panels": [
+        {
+          "id": "usage",
+          "title": {
+            "zh": "鐢ㄩ噺琛屾儏",
+            "en": "Usage"
+          },
+          "icon": "chart",
+          "placement": [
+            "session.tab",
+            "features"
+          ]
+        }
+      ]
+    }
   }
 }
+
