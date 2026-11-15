@@ -1234,9 +1234,26 @@ export function apply(ctx) {
   }
   const pick = (pair, caps) => (String(caps?.locale ?? 'en').toLowerCase().startsWith('zh') ? pair.zh : pair.en)
 
+  /**
+   * Per-panel state. The bridge passes only a scope, never plugin state, so a
+   * range choice and the tapped model live here, keyed by the normalized scope.
+   */
+  const nativeState = new Map()
+  const stateKeyOf = (scope) => JSON.stringify({ sessionId: scope?.sessionId ?? null })
+  const stateOf = (scope) => {
+    const key = stateKeyOf(scope)
+    let state = nativeState.get(key)
+    if (state === undefined) {
+      state = { days: 30, model: undefined, metric: 'cost' }
+      nativeState.set(key, state)
+    }
+    return state
+  }
+
   /** The panel's JSON view tree, built from the same numbers the Web page shows. */
   const nativeUsageView = async (scope, caps) => {
-    const days = 30
+    const state = stateOf(scope)
+    const days = RANGES.includes(state.days) ? state.days : 30
     const data = await overview(days)
     const account = await accountView({ status: 'unknown' }).catch(() => undefined)
     const usable = (account?.usable ?? []).find((entry) => entry.currency === data.currency) ?? (account?.usable ?? [])[0]
@@ -1244,36 +1261,55 @@ export function apply(ctx) {
     const buckets = totals.buckets ?? {}
     const inputs = (buckets.cacheRead ?? 0) + (buckets.uncached ?? 0)
     const hitRate = inputs <= 0 ? 0 : (buckets.cacheRead ?? 0) / inputs
+    const currency = data.currency ?? 'CNY'
+    const rangeLabel = `${days} 天`
 
     const labels = {
-      title: localized('用量行情', 'Usage terminal', caps),
-      spend: localized('近 30 天估算', 'Last 30 days', caps),
+      spend: localized(`${rangeLabel}估算`, `Last ${days}d`, caps),
       today: localized('今日', 'Today', caps),
       tokens: localized('Token', 'Tokens', caps),
       requests: localized('请求', 'Requests', caps),
       balance: localized('可用余额', 'Usable balance', caps),
       recharge: localized('充值余额', 'Recharged', caps),
       cache: localized('缓存命中率', 'Cache hit rate', caps),
-      models: localized('按模型', 'By model', caps),
-      ranking: localized('对话排名', 'Conversation ranking', caps),
+      range: localized('周期', 'Range', caps),
+      kline: localized('日 K 线', 'Daily K-line', caps),
+      byModel: localized('按模型', 'By model', caps),
+      leaders: localized('主力动向', 'Model ranking', caps),
+      tape: localized('逐笔成交', 'Live tape', caps),
+      ranking: localized('对话用量排名', 'Conversation ranking', caps),
       empty: localized('暂无用量记录。', 'No usage recorded yet.', caps),
       estimate: localized('金额按官方单价估算，并非账单。', 'Amounts are estimates from official rates, not a bill.', caps),
+      high: localized('最高', 'High', caps),
+      low: localized('最低', 'Low', caps),
+      share: localized('占比', 'Share', caps),
     }
 
-    const children = []
-    // Today's cost comes from the last candle of every series, which is where
-    // `summarize` folds a Session's newest request.
     const seriesList = Array.isArray(data.series) ? data.series : []
+    // Today's spend is the sum of every model's newest candle when that candle
+    // is today; the range total above already contains it.
     const todayCost = seriesList.reduce((sum, entry) => {
       const last = entry.candles?.[entry.candles.length - 1]
       return sum + (last !== undefined && last.day === data.today ? Number(last.sum ?? 0) : 0)
     }, 0)
 
+    const children = []
+
+    // Range picker: the client page's 7/14/30/60/90 switch.
+    const rangeOptions = RANGES.map((value) => ({ label: `${value} 天`, value: String(value) }))
+    children.push({
+      type: 'options',
+      id: 'range',
+      label: pick(labels.range, caps),
+      options: rangeOptions,
+      selected: String(days),
+    })
+
     children.push({
       type: 'row',
       children: [
-        { type: 'metric', label: pick(labels.spend, caps), value: nativeMoney(totals.cost, data.currency, 2), tone: 'info' },
-        { type: 'metric', label: pick(labels.today, caps), value: nativeMoney(todayCost, data.currency, 4) },
+        { type: 'metric', label: pick(labels.spend, caps), value: nativeMoney(totals.cost, currency, 2), tone: 'info' },
+        { type: 'metric', label: pick(labels.today, caps), value: nativeMoney(todayCost, currency, 4) },
       ],
     })
     children.push({
@@ -1284,19 +1320,23 @@ export function apply(ctx) {
       ],
     })
 
-    // Wallets: the recharged remainder and the usable total.
+    // Wallets: the recharged remainder and the usable total. `usableFor`
+    // exposes the recharged amount as `charged` and the granted bonus as
+    // `granted`, so the usable balance is their sum, never `granted` alone.
     if (usable !== undefined) {
+      const charged = Number(usable.charged ?? 0)
+      const granted = Number(usable.granted ?? 0)
       children.push({
         type: 'keyValue',
         items: [
-          [pick(labels.recharge, caps), nativeMoney(usable.charged ?? 0, data.currency, 2)],
-          [pick(labels.balance, caps), nativeMoney(Number(usable.granted ?? 0), data.currency, 2)],
+          [pick(labels.recharge, caps), nativeMoney(charged, currency, 2)],
+          [pick(labels.balance, caps), nativeMoney(charged + granted, currency, 2)],
         ],
       })
     }
     children.push({ type: 'progress', value: Math.round(hitRate * 100), label: pick(labels.cache, caps) })
 
-    // The daily spend series of each model: a bar chart is legible on a phone.
+    // The daily spend of every model, summed per day: the page's 日K view.
     const historyByDay = new Map()
     for (const entry of seriesList) {
       for (const candle of entry.candles ?? []) {
@@ -1310,30 +1350,65 @@ export function apply(ctx) {
         kind: 'bar',
         categories: history.map(([day]) => String(day).slice(5)),
         series: [{ name: pick(labels.spend, caps), values: history.map(([, cost]) => cost) }],
-        caption: pick(labels.spend, caps),
+        caption: pick(labels.kline, caps),
       })
     }
 
+    // 主力动向: models ranked by spend, with their share of the range.
     if (seriesList.length > 0) {
+      const ranked = seriesList.slice().sort((left, right) => Number(right.summary?.cost ?? 0) - Number(left.summary?.cost ?? 0))
       children.push({
         type: 'table',
-        columns: [{ label: pick(labels.models, caps) }, { label: 'Token', align: 'end' }, { label: pick(labels.spend, caps), align: 'end' }],
-        rows: seriesList.slice(0, 12).map((entry) => [
-          String(entry.model ?? '—'),
-          compactNumber(entry.summary?.tokens),
-          nativeMoney(entry.summary?.cost, data.currency, 4),
-        ]),
+        columns: [
+          { label: pick(labels.leaders, caps) },
+          { label: 'Token', align: 'end' },
+          { label: pick(labels.spend, caps), align: 'end' },
+          { label: pick(labels.share, caps), align: 'end' },
+        ],
+        rows: ranked.slice(0, 12).map((entry) => {
+          const cost = Number(entry.summary?.cost ?? 0)
+          return [
+            String(entry.model ?? '—'),
+            compactNumber(entry.summary?.tokens),
+            nativeMoney(cost, currency, 4),
+            totals.cost > 0 ? `${((cost / totals.cost) * 100).toFixed(1)}%` : '0.0%',
+          ]
+        }),
       })
     }
 
+    // 逐笔成交: the newest priced calls, newest first.
+    const priced = Array.isArray(data.priced) ? data.priced : []
+    if (priced.length > 0) {
+      const newest = priced.slice().sort((left, right) => right.time - left.time).slice(0, 8)
+      children.push({
+        type: 'list',
+        items: newest.map((call) => ({
+          title: String(call.model ?? '—'),
+          subtitle: new Date(call.time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          trailing: nativeMoney(call.cost, currency, 4),
+          icon: 'chart',
+        })),
+      })
+    }
+
+    // 对话用量排名: lifetime spend per conversation. A row shows the id tail
+    // because tapping cannot select a conversation in the App.
     const conversations = Array.isArray(data.lifetimeConversations) ? data.lifetimeConversations : []
     if (conversations.length > 0) {
       children.push({
         type: 'list',
-        items: conversations.slice(0, 12).map((row) => ({
+        items: conversations.slice(0, 12).map((row, index) => ({
           title: String(row.title ?? row.label ?? row.sessionId ?? '—').slice(0, 60),
-          subtitle: `${String(row.workspace?.title ?? '')}`.trim() || undefined,
-          trailing: nativeMoney(row.cost, data.currency, 4),
+          subtitle:
+            [
+              String(row.workspace?.title ?? '').trim(),
+              String(row.sessionId ?? '').replace(/^session-/, '').slice(0, 8),
+              `#${index + 1}`,
+            ]
+              .filter((part) => part !== '')
+              .join(' · ') || undefined,
+          trailing: nativeMoney(row.cost, currency, 4),
           icon: 'chat',
         })),
       })
@@ -1378,6 +1453,13 @@ export function apply(ctx) {
           refresh: () => {
             scan = undefined
             return { toast: '已刷新' }
+          },
+          // The range picker sends `{ value }`; remember it for this scope and
+          // ask the App to re-read the view.
+          range: (scope, event) => {
+            const next = Number(event?.value?.value)
+            if (RANGES.includes(next)) stateOf(scope).days = next
+            return { refresh: true }
           },
         },
       })
