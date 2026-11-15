@@ -1,10 +1,10 @@
 {
   "meta": {
-    "title": "DeepSeek usage K-line",
-    "description": "Daily token usage, spend and account balance drawn as a candlestick chart in the composer dock."
+    "title": "Usage terminal",
+    "description": "DeepSeek usage drawn as a trading terminal, with native DSH-Go panels for the range picker, daily and intraday charts, model rankings and per-conversation spend."
   },
   "panel": {
-    "title": "DeepSeek usage K-line",
+    "title": "Usage terminal",
     "subtitle": "Daily spend from session logs, priced with official rates",
     "close": "Close",
     "refresh": "Refresh",
@@ -18,7 +18,7 @@
     "seriesWeb": "Search/fetch cost",
     "seriesFlash": "Flash requests",
     "seriesPro": "Pro requests",
-    "balance": "Balance",
+    "balance": "Usable balance",
     "bonus": "Granted",
     "spendToday": "Today",
     "spend7d": "Last 7 days",
