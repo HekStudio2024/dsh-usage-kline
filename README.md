@@ -14,7 +14,14 @@ the numbers with its own widgets instead of loading a WebView island:
 | Surface | What it shows |
 |---|---|
 | `composer.strip` | today's estimated spend, for example `今日 ¥0.2046`; tapping it opens the panel |
-| `panels` (`session.tab`, `features`) | estimated spend and today's spend, tokens and requests, cache hit rate, a daily spend bar chart, spend per model, and the top conversations by lifetime spend |
+| `panels` (`session.tab`, `features`) | a 7/14/30/60/90-day range picker; estimated spend and today's spend; tokens, requests and the cache hit rate; recharged and usable balance; a daily spend bar chart per range; 主力动向 (models ranked by spend with their share); 逐笔成交 (the newest priced calls); and the 对话用量排名 (lifetime spend per conversation) |
+
+The range choice is kept per session in the Host half, because the bridge
+passes only a scope and never plugin state.
+
+Composer taps are limited by the App: an `open` effect accepts only App page
+ids, so tapping a conversation row cannot select that conversation. Rows
+therefore show the conversation id tail instead of implying navigation.
 
 The views are built by the Host half through `ctx.dshGo` from the same numbers
 as the Web page, and never run plugin code inside the App. The bridge is
