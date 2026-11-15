@@ -1274,6 +1274,7 @@ export function apply(ctx) {
       cache: localized('缓存命中率', 'Cache hit rate', caps),
       range: localized('周期', 'Range', caps),
       kline: localized('日 K 线', 'Daily K-line', caps),
+      intraday: localized('分时', 'Intraday', caps),
       byModel: localized('按模型', 'By model', caps),
       leaders: localized('主力动向', 'Model ranking', caps),
       tape: localized('逐笔成交', 'Live tape', caps),
@@ -1295,14 +1296,21 @@ export function apply(ctx) {
 
     const children = []
 
-    // Range picker: the client page's 7/14/30/60/90 switch.
-    const rangeOptions = RANGES.map((value) => ({ label: `${value} 天`, value: String(value) }))
+    // Range picker. `tabs` switches locally without invoking the plugin and
+    // `actions` caps at four, so a single-choice list is what can actually
+    // change the server-side range; `grid` keeps it to a few short rows.
     children.push({
-      type: 'options',
-      id: 'range',
-      label: pick(labels.range, caps),
-      options: rangeOptions,
-      selected: String(days),
+      type: 'grid',
+      columns: 3,
+      children: [
+        {
+          type: 'options',
+          id: 'range',
+          label: pick(labels.range, caps),
+          options: RANGES.map((value) => ({ label: `${value}天`, value: String(value) })),
+          selected: String(days),
+        },
+      ],
     })
 
     children.push({
@@ -1336,22 +1344,70 @@ export function apply(ctx) {
     }
     children.push({ type: 'progress', value: Math.round(hitRate * 100), label: pick(labels.cache, caps) })
 
-    // The daily spend of every model, summed per day: the page's 日K view.
-    const historyByDay = new Map()
+    // Daily totals per day, in cost and in tokens: the page's 日K series.
+    const dailyCost = new Map()
+    const dailyTokens = new Map()
     for (const entry of seriesList) {
       for (const candle of entry.candles ?? []) {
-        historyByDay.set(candle.day, (historyByDay.get(candle.day) ?? 0) + Number(candle.sum ?? 0))
+        dailyCost.set(candle.day, (dailyCost.get(candle.day) ?? 0) + Number(candle.sum ?? 0))
+        dailyTokens.set(candle.day, (dailyTokens.get(candle.day) ?? 0) + Number(candle.openTokens ?? 0))
       }
     }
-    const history = [...historyByDay.entries()].sort(([left], [right]) => (left < right ? -1 : 1))
-    if (history.length > 0) {
-      children.push({
+    const dayKeys = [...dailyCost.keys()].sort((left, right) => (left < right ? -1 : 1))
+    const dayLabels = dayKeys.map((day) => String(day).slice(5))
+
+    // Per-call series of today, the page's 分时 view.
+    const todayCalls = (Array.isArray(data.priced) ? data.priced : [])
+      .filter((call) => dayKey(call.time, 8 * 3_600_000) === data.today)
+      .sort((left, right) => left.time - right.time)
+    const intradayLabels = todayCalls.map((call) =>
+      new Date(call.time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+    )
+
+    // 日线 / 分时 and 金额 / Token are local tabs: switching costs no round trip.
+    const dailyPanels = [
+      {
         type: 'chart',
         kind: 'bar',
-        categories: history.map(([day]) => String(day).slice(5)),
-        series: [{ name: pick(labels.spend, caps), values: history.map(([, cost]) => cost) }],
+        categories: dayLabels,
+        series: [{ name: pick(labels.spend, caps), values: dayKeys.map((day) => dailyCost.get(day) ?? 0) }],
         caption: pick(labels.kline, caps),
-      })
+      },
+      {
+        type: 'chart',
+        kind: 'bar',
+        categories: dayLabels,
+        series: [{ name: 'Token', values: dayKeys.map((day) => dailyTokens.get(day) ?? 0) }],
+        caption: pick(labels.kline, caps),
+      },
+    ]
+    const intradayPanels = [
+      {
+        type: 'chart',
+        kind: 'line',
+        categories: intradayLabels,
+        series: [{ name: pick(labels.spend, caps), values: todayCalls.map((call) => Number(call.cost ?? 0)) }],
+        caption: pick(labels.intraday, caps),
+      },
+      {
+        type: 'chart',
+        kind: 'line',
+        categories: intradayLabels,
+        series: [{ name: 'Token', values: todayCalls.map((call) => Number(call.tokens ?? 0)) }],
+        caption: pick(labels.intraday, caps),
+      },
+    ]
+    const chartTabs = (items) => ({
+      type: 'tabs',
+      items: items.map((tab) => ({ label: pick(tab.label, caps), children: [tab.children] })),
+    })
+    if (dayKeys.length > 0 || todayCalls.length > 0) {
+      children.push(
+        chartTabs([
+          { label: labels.kline, children: chartTabs(dailyPanels.map((panel, index) => ({ label: index === 0 ? labels.spend : { zh: 'Token', en: 'Tokens' }, children: panel }))) },
+          { label: labels.intraday, children: chartTabs(intradayPanels.map((panel, index) => ({ label: index === 0 ? labels.spend : { zh: 'Token', en: 'Tokens' }, children: panel }))) },
+        ]),
+      )
     }
 
     // 主力动向: models ranked by spend, with their share of the range.
@@ -1457,7 +1513,7 @@ export function apply(ctx) {
           // The range picker sends `{ value }`; remember it for this scope and
           // ask the App to re-read the view.
           range: (scope, event) => {
-            const next = Number(event?.value?.value)
+            const next = Number(event?.value?.value ?? event?.value?.days)
             if (RANGES.includes(next)) stateOf(scope).days = next
             return { refresh: true }
           },
