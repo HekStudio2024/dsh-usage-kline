@@ -1,15 +1,15 @@
 {
   "meta": {
-    "title": "DeepSeek 用量 K 线",
-    "description": "以 K 线图展示每日 token 用量、金额消费与账户余额，显示在输入框下方。"
+    "title": "用量行情",
+    "description": "以 K 线风格展示每日 token 用量、金额消费与账户余额，并在 DSH-Go 中原生显示周期选择、日线与分时图表、模型排名和对话用量排名。"
   },
   "panel": {
-    "title": "DeepSeek 用量 K 线",
+    "title": "用量行情",
     "subtitle": "按会话日志统计每日消费，并按官方价格估算金额",
     "close": "关闭",
     "refresh": "刷新",
     "retry": "重试",
-    "range": "范围",
+    "range": "周期",
     "days": "{n} 天",
     "metricCost": "金额",
     "metricTokens": "Token",
@@ -18,7 +18,7 @@
     "seriesWeb": "搜索/抓取费用",
     "seriesFlash": "Flash 请求",
     "seriesPro": "Pro 请求",
-    "balance": "余额",
+    "balance": "可用余额",
     "bonus": "赠送余额",
     "spendToday": "今日消费",
     "spend7d": "近 7 天",
