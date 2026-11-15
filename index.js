@@ -21,7 +21,11 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-export const inject = ['connection', 'webServer']
+// No `inject` declaration on purpose. Cordis treats every declared name as a
+// hard dependency and holds the plugin until that service exists, so listing
+// `webServer`/`connection` made the whole bundle fail to start on a Host
+// without them (the DSH-Go Android engine). Both are looked up lazily in
+// `apply` through `ctx.get`, and the native `dshGo` surfaces do not need them.
 
 // Defaults of every field the Host config may set. The row's config is read
 // through `ctx.fiber.entry.config`; resolved defaults are not declared here.
@@ -469,7 +473,17 @@ export function apply(ctx) {
   })
 
   // Search and Fetch are billed per successful request and expose no usage.
-  const web = ctx.get?.('web')
+  // `ctx.get` throws for a service this Host does not provide, so every lookup
+  // below is guarded: a Host without `web` simply records no web calls.
+  const lookup = (name) => {
+    try {
+      return typeof ctx.get === 'function' ? ctx.get(name) : undefined
+    } catch (error) {
+      void error
+      return undefined
+    }
+  }
+  const web = lookup('web')
   let restoreWeb
   if (web !== undefined && web !== null && typeof web.search === 'function' && typeof web.fetch === 'function') {
     const originalSearch = web.search
@@ -588,8 +602,8 @@ export function apply(ctx) {
    * so a Host whose checkpoint path is unreachable still lists conversations.
    */
   const callsOfProjections = async () => {
-    const query = ctx.get?.('sessionQuery')
-    const projections = ctx.get?.('sessionProjections')
+    const query = lookup('sessionQuery')
+    const projections = lookup('sessionProjections')
     if (query === undefined || query === null || projections === undefined || projections === null) return []
     let records = []
     try {
@@ -810,7 +824,7 @@ export function apply(ctx) {
     const rows = [...bySession.values()]
     const ids = rows.map((row) => row.sessionId)
     const titles = new Map()
-    const query = ctx.get?.('sessionQuery')
+    const query = lookup('sessionQuery')
     if (query !== undefined && query !== null && typeof query.readTitleSnapshots === 'function' && ids.length > 0) {
       try {
         const results = await query.readTitleSnapshots(ids)
@@ -825,7 +839,7 @@ export function apply(ctx) {
     }
     // Session → Workspace, from the durable registry (archived sessions kept).
     const workspaceOf = new Map()
-    const registry = ctx.get?.('workspaceRegistry')
+    const registry = lookup('workspaceRegistry')
     let workspaceCount = 0
     try {
       const workspaces = registry !== undefined && registry !== null && typeof registry.list === 'function' ? registry.list() : []
@@ -923,7 +937,7 @@ export function apply(ctx) {
    */
   const turnsOf = (sessionId) => {
     if (typeof sessionId !== 'string' || sessionId === '') return undefined
-    const sessions = ctx.get?.('sessions')
+    const sessions = lookup('sessions')
     if (sessions === undefined || sessions === null || typeof sessions.binding !== 'function') return undefined
     let binding
     try {
@@ -1024,7 +1038,7 @@ export function apply(ctx) {
    * Usage and Top-up destinations, which the panel opens in a new tab.
    */
   const accountView = async (runtime) => {
-    const account = ctx.get?.('deepseekAccount')
+    const account = lookup('deepseekAccount')
     const fallbackUrls = {
       usageUrl: 'https://platform.deepseek.com/usage',
       topUpUrl: 'https://platform.deepseek.com/top_up',
@@ -1114,7 +1128,29 @@ export function apply(ctx) {
     response.end(JSON.stringify(value))
   }
 
-  const route = ctx.webServer.register({
+  // The HTTP surface needs a Web server and, on a Web Host, an admission
+  // check. Both are optional: with neither, only the DSH-Go native surfaces
+  // exist and the routes are skipped.
+  const webServer = (() => {
+    try {
+      const service = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
+      if (service !== undefined && service !== null && typeof service.register === 'function') return service
+    } catch (error) {
+      void error
+    }
+    return undefined
+  })()
+  const admitOf = (request) => {
+    try {
+      const service = typeof ctx.get === 'function' ? ctx.get('connection') : undefined
+      if (service !== undefined && service !== null && typeof service.admit === 'function') return service.admit(request)
+    } catch (error) {
+      void error
+    }
+    return undefined
+  }
+
+  const route = webServer === undefined ? undefined : webServer.register({
     kind: 'prefix',
     path: API,
     handler: async (request, response) => {
@@ -1123,7 +1159,7 @@ export function apply(ctx) {
           reply(response, 503, { error: 'usage service is reloading' })
           return
         }
-        const admission = ctx.connection.admit(request)
+        const admission = admitOf(request)
         if (admission !== undefined && 'rejection' in admission) {
           reply(response, 401, { error: 'not admitted' })
           return
