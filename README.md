@@ -6,6 +6,23 @@ it. The layout follows the stock-terminal reference: dark board, left
 watchlist, central K-line stage with volume, right-side rankings and a live
 tape, a model table below, and a status bar.
 
+## DSH-Go (Android) native surface
+
+The bundle also declares a `dshGo` manifest, so the DSH-Go Android client draws
+the numbers with its own widgets instead of loading a WebView island:
+
+| Surface | What it shows |
+|---|---|
+| `composer.strip` | today's estimated spend, for example `今日 ¥0.2046`; tapping it opens the panel |
+| `panels` (`session.tab`, `features`) | estimated spend and today's spend, tokens and requests, cache hit rate, a daily spend bar chart, spend per model, and the top conversations by lifetime spend |
+
+The views are built by the Host half through `ctx.dshGo` from the same numbers
+as the Web page, and never run plugin code inside the App. The bridge is
+optional: on a Host without `dshGo` the injection callback never runs and only
+the Web surface exists, so the same package serves both.
+
+Set `dshGo.minApp` in `package.json` if a future surface needs a newer client.
+
 ## Where it appears
 
 - **Workspace strip** (left column, under Plugins / Schedules): a **Usage
@@ -87,7 +104,7 @@ Amounts are estimates from those rates, not the actual bill.
 - `sidebar.panellist` (id `usage-kline`) — the workspace-strip row glyph.
 - `main` (key `usage-kline`) — the page that row selects.
 - `sidebarRightTabs.register` — the tab type `usage-kline` (id
-  `dsh-usage-kline/tab`) for the workspace column.
+  `@local/dsh-usage-kline/tab`) for the workspace column.
 - `sidebar.right.pane.tab` / `sidebar.right.pane.tab.title` — that tab's body.
 - `conversation.composer.dock` — the chip under the input.
 
