@@ -1,6 +1,7 @@
 {
-  "name": "dsh-usage-kline",
+  "name": "@local/dsh-usage-kline",
   "version": "1.2.0",
+  "private": true,
   "type": "module",
   "description": "DeepSeek usage terminal: a stock-terminal style K-line panel for usage, spend and balance",
   "main": "index.js",
@@ -34,7 +35,7 @@
     "v": 1,
     "minApp": "1.0.3",
     "title": {
-      "zh": "鐢ㄩ噺琛屾儏",
+      "zh": "用量行情",
       "en": "Usage terminal"
     },
     "icon": "chart",
@@ -50,7 +51,7 @@
         {
           "id": "usage",
           "title": {
-            "zh": "鐢ㄩ噺琛屾儏",
+            "zh": "用量行情",
             "en": "Usage"
           },
           "icon": "chart",
