@@ -1210,6 +1210,212 @@ export function apply(ctx) {
     },
   })
 
+  // ---------------------------------------------------------------------
+  // DSH-Go native surface. The Android client renders its own widgets from
+  // JSON views and never runs plugin code, so this half only builds views and
+  // data snapshots. It is opt-in: on a Host without the `dshGo` bridge the
+  // callback below never runs and the Web UI stays the only surface.
+  // ---------------------------------------------------------------------
+  /** Compact money for a native metric, e.g. ¥1.2340. */
+  const nativeMoney = (value, currency, digits = 2) => {
+    const amount = Number.isFinite(value) ? value : 0
+    const symbol = currency === 'USD' ? '$' : '¥'
+    return `${symbol}${amount.toFixed(digits)}`
+  }
+  const compactNumber = (value) => {
+    const number = Number.isFinite(value) ? value : 0
+    if (number >= 1e6) return `${(number / 1e6).toFixed(2)}M`
+    if (number >= 1e3) return `${(number / 1e3).toFixed(1)}K`
+    return String(Math.round(number))
+  }
+  const localized = (zh, en, caps) => {
+    const locale = String(caps?.locale ?? '').toLowerCase()
+    return locale.startsWith('zh') ? { zh, en } : { zh, en }
+  }
+  const pick = (pair, caps) => (String(caps?.locale ?? 'en').toLowerCase().startsWith('zh') ? pair.zh : pair.en)
+
+  /** The panel's JSON view tree, built from the same numbers the Web page shows. */
+  const nativeUsageView = async (scope, caps) => {
+    const days = 30
+    const data = await overview(days)
+    const account = await accountView({ status: 'unknown' }).catch(() => undefined)
+    const usable = (account?.usable ?? []).find((entry) => entry.currency === data.currency) ?? (account?.usable ?? [])[0]
+    const totals = data.totals ?? { cost: 0, tokens: 0, requests: 0, buckets: {} }
+    const buckets = totals.buckets ?? {}
+    const inputs = (buckets.cacheRead ?? 0) + (buckets.uncached ?? 0)
+    const hitRate = inputs <= 0 ? 0 : (buckets.cacheRead ?? 0) / inputs
+
+    const labels = {
+      title: localized('用量行情', 'Usage terminal', caps),
+      spend: localized('近 30 天估算', 'Last 30 days', caps),
+      today: localized('今日', 'Today', caps),
+      tokens: localized('Token', 'Tokens', caps),
+      requests: localized('请求', 'Requests', caps),
+      balance: localized('可用余额', 'Usable balance', caps),
+      recharge: localized('充值余额', 'Recharged', caps),
+      cache: localized('缓存命中率', 'Cache hit rate', caps),
+      models: localized('按模型', 'By model', caps),
+      ranking: localized('对话排名', 'Conversation ranking', caps),
+      empty: localized('暂无用量记录。', 'No usage recorded yet.', caps),
+      estimate: localized('金额按官方单价估算，并非账单。', 'Amounts are estimates from official rates, not a bill.', caps),
+    }
+
+    const children = []
+    // Today's cost comes from the last candle of every series, which is where
+    // `summarize` folds a Session's newest request.
+    const seriesList = Array.isArray(data.series) ? data.series : []
+    const todayCost = seriesList.reduce((sum, entry) => {
+      const last = entry.candles?.[entry.candles.length - 1]
+      return sum + (last !== undefined && last.day === data.today ? Number(last.sum ?? 0) : 0)
+    }, 0)
+
+    children.push({
+      type: 'row',
+      children: [
+        { type: 'metric', label: pick(labels.spend, caps), value: nativeMoney(totals.cost, data.currency, 2), tone: 'info' },
+        { type: 'metric', label: pick(labels.today, caps), value: nativeMoney(todayCost, data.currency, 4) },
+      ],
+    })
+    children.push({
+      type: 'row',
+      children: [
+        { type: 'metric', label: pick(labels.tokens, caps), value: compactNumber(totals.tokens) },
+        { type: 'metric', label: pick(labels.requests, caps), value: String(totals.requests ?? 0) },
+      ],
+    })
+
+    // Wallets: the recharged remainder and the usable total.
+    if (usable !== undefined) {
+      children.push({
+        type: 'keyValue',
+        items: [
+          [pick(labels.recharge, caps), nativeMoney(usable.charged ?? 0, data.currency, 2)],
+          [pick(labels.balance, caps), nativeMoney(Number(usable.granted ?? 0), data.currency, 2)],
+        ],
+      })
+    }
+    children.push({ type: 'progress', value: Math.round(hitRate * 100), label: pick(labels.cache, caps) })
+
+    // The daily spend series of each model: a bar chart is legible on a phone.
+    const historyByDay = new Map()
+    for (const entry of seriesList) {
+      for (const candle of entry.candles ?? []) {
+        historyByDay.set(candle.day, (historyByDay.get(candle.day) ?? 0) + Number(candle.sum ?? 0))
+      }
+    }
+    const history = [...historyByDay.entries()].sort(([left], [right]) => (left < right ? -1 : 1))
+    if (history.length > 0) {
+      children.push({
+        type: 'chart',
+        kind: 'bar',
+        categories: history.map(([day]) => String(day).slice(5)),
+        series: [{ name: pick(labels.spend, caps), values: history.map(([, cost]) => cost) }],
+        caption: pick(labels.spend, caps),
+      })
+    }
+
+    if (seriesList.length > 0) {
+      children.push({
+        type: 'table',
+        columns: [{ label: pick(labels.models, caps) }, { label: 'Token', align: 'end' }, { label: pick(labels.spend, caps), align: 'end' }],
+        rows: seriesList.slice(0, 12).map((entry) => [
+          String(entry.model ?? '—'),
+          compactNumber(entry.summary?.tokens),
+          nativeMoney(entry.summary?.cost, data.currency, 4),
+        ]),
+      })
+    }
+
+    const conversations = Array.isArray(data.lifetimeConversations) ? data.lifetimeConversations : []
+    if (conversations.length > 0) {
+      children.push({
+        type: 'list',
+        items: conversations.slice(0, 12).map((row) => ({
+          title: String(row.title ?? row.label ?? row.sessionId ?? '—').slice(0, 60),
+          subtitle: `${String(row.workspace?.title ?? '')}`.trim() || undefined,
+          trailing: nativeMoney(row.cost, data.currency, 4),
+          icon: 'chat',
+        })),
+      })
+    }
+
+    if (children.length === 0) {
+      children.push({ type: 'callout', text: pick(labels.empty, caps), tone: 'info' })
+    }
+    children.push({ type: 'text', text: pick(labels.estimate, caps), tone: 'muted' })
+    return { v: 2, type: 'stack', accent: 'app', children }
+  }
+
+  try {
+    ctx.inject(['dshGo'], (scoped) => {
+      scoped.dshGo.panel('usage', {
+        view: (scope, caps) => nativeUsageView(scope, caps),
+        data: (scope, emit, caps) => {
+          // Push a fresh snapshot once, then on every committed usage event.
+          let disposed = false
+          let timer
+          const push = () => {
+            if (disposed) return
+            nativeUsageView(scope, caps)
+              .then((view) => {
+                if (!disposed) emit({ view })
+              })
+              .catch(() => undefined)
+          }
+          push()
+          timer = setInterval(push, 60_000)
+          timer.unref?.()
+          // `listeners` is the same feed the HTTP clients subscribe to.
+          const listener = () => push()
+          listeners.add(listener)
+          return () => {
+            disposed = true
+            clearInterval(timer)
+            listeners.delete(listener)
+          }
+        },
+        actions: {
+          refresh: () => {
+            scan = undefined
+            return { toast: '已刷新' }
+          },
+        },
+      })
+      // The composer strip shows today's spend and opens the panel when tapped.
+      scoped.dshGo.strip('today', (scope, emit, caps) => {
+        let disposed = false
+        const render = async () => {
+          const data = await overview(7).catch(() => undefined)
+          if (disposed || data === undefined) return
+          const currency = data.currency ?? 'CNY'
+          const zh = String(caps?.locale ?? 'en').toLowerCase().startsWith('zh')
+          // Today's sum is the newest candle of each model series.
+          const cost = (Array.isArray(data.series) ? data.series : []).reduce((sum, entry) => {
+            const last = entry.candles?.[entry.candles.length - 1]
+            return sum + (last !== undefined && last.day === data.today ? Number(last.sum ?? 0) : 0)
+          }, 0)
+          const text = `${zh ? '今日' : 'Today'} ${nativeMoney(cost, currency, 4)}`
+          emit({ text: text.slice(0, 24), icon: 'chart' })
+        }
+        render()
+        const timer = setInterval(render, 60_000)
+        timer.unref?.()
+        const listener = () => {
+          render().catch(() => undefined)
+        }
+        listeners.add(listener)
+        return () => {
+          disposed = true
+          clearInterval(timer)
+          listeners.delete(listener)
+        }
+      })
+    })
+  } catch (error) {
+    // A Host without the DSH-Go bridge simply keeps the Web surface.
+    void error
+  }
+
   ctx.effect(
     () => () => {
       closed = true
