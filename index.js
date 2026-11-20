@@ -1140,6 +1140,12 @@ export function apply(ctx) {
     }
     return undefined
   })()
+  /**
+   * The Host's admission check for one request, or `undefined` when this Host
+   * offers no `connection` service. Callers must treat `undefined` as denied:
+   * these routes expose usage and balance data, so a missing checker is a
+   * reason to refuse, never a reason to serve everyone.
+   */
   const admitOf = (request) => {
     try {
       const service = typeof ctx.get === 'function' ? ctx.get('connection') : undefined
@@ -1159,8 +1165,15 @@ export function apply(ctx) {
           reply(response, 503, { error: 'usage service is reloading' })
           return
         }
+        // Fail closed: no admission checker means no access to the data. The
+        // route is then unusable, which is correct, and the DSH-Go native
+        // panel (which never goes through HTTP) keeps working.
         const admission = admitOf(request)
-        if (admission !== undefined && 'rejection' in admission) {
+        if (admission === undefined) {
+          reply(response, 403, { error: 'usage routes require an admission service on this Host' })
+          return
+        }
+        if ('rejection' in admission) {
           reply(response, 401, { error: 'not admitted' })
           return
         }
