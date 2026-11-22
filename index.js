@@ -568,9 +568,13 @@ export function apply(ctx) {
         if (route === undefined) continue
         if (!includeSubagents && identity?.origin === 'subagent') continue
         if (priceEntry(priceTable('CNY'), route.provider, route.model) === undefined) continue
-        // The checkpoint keeps whole-Session totals, so the Session is placed at
-        // its newest request: the anchor's recorded time, else the file mtime.
-        const time = Number(measurement?.anchor?.time) || (await attemptStat(join(directory, name))) || createdAt
+        // When a Session was last active: `timeContext.lastMessageTime` is the
+        // durable record and is what keeps each Session on its own day. The
+        // measurement anchor carries no timestamp, so falling back to the file
+        // mtime would collapse every rewritten Session onto today and erase the
+        // history the charts are supposed to show.
+        const lastMessageTime = Number(rows.timeContext?.val?.lastMessageTime) || 0
+        const time = lastMessageTime || createdAt || (await attemptStat(join(directory, name)))
         gathered.push({
           time,
           model: route.model,
