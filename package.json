@@ -1,6 +1,6 @@
 {
   "name": "dsh-usage-kline",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "type": "module",
   "description": "DeepSeek usage terminal: a stock-terminal style K-line panel for usage, spend and balance",
   "main": "index.js",
